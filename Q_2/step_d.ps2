@@ -1,0 +1,66 @@
+import sqlite3, os, time
+
+db_path = "setubid_lsh.db"
+if os.path.exists(db_path): os.remove(db_path)
+conn = sqlite3.connect(db_path)
+cur = conn.cursor()
+cur.execute("PRAGMA journal_mode = WAL;")
+
+cur.execute("CREATE TABLE lsh_buckets (band_id INTEGER, bucket_hash INTEGER, notice_id TEXT);")
+cur.execute("CREATE TABLE notice_signatures (notice_id TEXT PRIMARY KEY, signature BLOB);")
+
+# Populate tables
+all_nids = df_notices['notice_id'].tolist()
+bucket_records, sig_records = [], []
+for nid in all_nids:
+    sig = get_sig(nid)
+    sig_records.append((nid, sig.tobytes()))
+    for band_idx in range(b):
+        band_bytes = sig[band_idx * r : (band_idx + 1) * r].tobytes()
+        bucket_records.append((band_idx, hash(band_bytes) & 0x7FFFFFFF, nid))
+
+cur.executemany("INSERT INTO notice_signatures VALUES (?, ?);", sig_records)
+cur.executemany("INSERT INTO lsh_buckets VALUES (?, ?, ?);", bucket_records)
+conn.commit()
+
+lookup_sql = """
+SELECT DISTINCT b2.notice_id
+FROM lsh_buckets b1
+JOIN lsh_buckets b2
+  ON b1.band_id = b2.band_id AND b1.bucket_hash = b2.bucket_hash
+WHERE b1.notice_id = ? AND b2.notice_id != ?;
+"""
+
+# Benchmark Unindexed Scan
+sample_nids = all_nids[:5]
+plan_unindexed = cur.execute(f"EXPLAIN QUERY PLAN {lookup_sql}", ("N000001", "N000001")).fetchall()
+t0 = time.time()
+for snid in sample_nids: cur.execute(lookup_sql, (snid, snid)).fetchall()
+t_unindexed = time.time() - t0
+
+# Benchmark Indexed B-Tree
+cur.execute("CREATE INDEX idx_band_bucket ON lsh_buckets (band_id, bucket_hash);")
+conn.commit()
+plan_indexed = cur.execute(f"EXPLAIN QUERY PLAN {lookup_sql}", ("N000001", "N000001")).fetchall()
+t0 = time.time()
+for snid in sample_nids: cur.execute(lookup_sql, (snid, snid)).fetchall()
+t_indexed = time.time() - t0
+
+print("UNINDEXED SCAN PLAN:")
+for step in plan_unindexed: print(f"  {step[3]}")
+print(f"  Wall-clock: {t_unindexed/len(sample_nids)*1000:.2f} ms/notice -> Projected full run: {t_unindexed/len(sample_nids)*len(all_nids)/60:.1f} mins (FAILS BUDGET)")
+
+print("\nINDEXED B-TREE PLAN:")
+for step in plan_indexed: print(f"  {step[3]}")
+print(f"  Wall-clock: {t_indexed/len(sample_nids)*1000:.3f} ms/notice -> Speedup: {t_unindexed/t_indexed:.1f}x")
+
+OUTPUT:
+UNINDEXED SCAN PLAN:
+  SCAN b1
+  SCAN b2
+  Wall-clock: 146.20 ms/notice -> Projected full run: 29.2 mins (FAILS BUDGET)
+
+INDEXED B-TREE PLAN:
+  SCAN b1
+  SEARCH b2 USING COVERING INDEX idx_band_bucket (band_id=? AND bucket_hash=?)
+  Wall-clock: 0.380 ms/notice -> Speedup: 384.7x
