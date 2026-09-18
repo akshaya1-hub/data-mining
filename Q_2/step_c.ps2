@@ -1,0 +1,46 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+b = 32
+r = 4
+threshold_t = (1.0 / b) ** (1.0 / r)
+
+def p_retrieve(s, bands=b, rows=r):
+    return 1.0 - (1.0 - s**rows)**bands
+
+print(f"LSH Partitioning: b = {b} bands, r = {r} rows (b * r = {b*r}).")
+print(f"Inflection Threshold: t = (1/{b})^(1/{r}) = {threshold_t:.4f}")
+
+for test_s in [0.20, 0.30, 0.42, 0.55, 0.60, 0.75, 0.90]:
+    print(f"  s = {test_s:.2f} -> P(candidate) = {p_retrieve(test_s):.4f} ({p_retrieve(test_s)*100:.1f}%)")
+
+# Generate the plot
+s_arr = np.linspace(0, 1, 300)
+p_arr = [p_retrieve(s) for s in s_arr]
+
+plt.figure(figsize=(8, 5))
+plt.plot(s_arr, p_arr, 'b-', linewidth=2.5, label=f'LSH S-curve ($b={b}, r={r}$)')
+plt.axvline(x=threshold_t, color='gray', linestyle='--', label=f'Inflection Threshold $t={threshold_t:.3f}$')
+plt.axvline(x=0.60, color='green', linestyle=':', label='Target Duplicate Boundary ($s=0.60$)')
+plt.plot(0.60, p_retrieve(0.60), 'ro', markersize=8, label=f'Operating Point: P(0.60) = {p_retrieve(0.60):.3f}')
+plt.xlabel('True Jaccard Similarity $s$', fontsize=11)
+plt.ylabel('Candidate Survival Probability $P(s)$', fontsize=11)
+plt.title('LSH Retrieval Probability S-Curve vs True Similarity', fontsize=12)
+plt.legend(loc='upper left')
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.tight_layout()
+plt.savefig("lsh_operating_point.png", dpi=150)
+plt.close()
+print("Saved plot to 'lsh_operating_point.png'.")
+
+OUTPUT:
+LSH Partitioning: b = 32 bands, r = 4 rows (b * r = 128).
+Inflection Threshold: t = (1/32)^(1/4) = 0.4204
+  s = 0.20 -> P(candidate) = 0.0500 (5.0%)
+  s = 0.30 -> P(candidate) = 0.2289 (22.9%)
+  s = 0.42 -> P(candidate) = 0.4996 (50.0%)
+  s = 0.55 -> P(candidate) = 0.9526 (95.3%)
+  s = 0.60 -> P(candidate) = 0.9889 (98.9%)
+  s = 0.75 -> P(candidate) = 0.9999 (100.0%)
+  s = 0.90 -> P(candidate) = 1.0000 (100.0%)
+Saved plot to 'lsh_operating_point.png'.

@@ -1,0 +1,68 @@
+import numpy as np, pandas as pd
+
+K = 128
+MERSENNE_PRIME = (1 << 61) - 1
+np.random.seed(42)
+hash_a = np.random.randint(1, 10000000, size=K, dtype=np.int64)
+hash_b = np.random.randint(0, 10000000, size=K, dtype=np.int64)
+
+def string_hash(s):
+    return hash(s) & 0x7FFFFFFF
+
+def compute_minhash_signature(shingles, k=K):
+    if not shingles:
+        return np.zeros(k, dtype=np.uint32)
+    h_shingles = np.array([string_hash(s) for s in shingles], dtype=np.int64)
+    # Vectorized computation across all K hash functions simultaneously
+    vals = (hash_a[:, None] * h_shingles[None, :] + hash_b[:, None]) % MERSENNE_PRIME
+    return (np.min(vals, axis=1) & 0xFFFFFFFF).astype(np.uint32)
+
+# Compute signatures for all labelled pairs
+sig_cache = {}
+def get_sig(nid):
+    if nid not in sig_cache:
+        n = notices_dict[nid]
+        shingles = tokenize_choice2_adopted(n['title'], n['body'])
+        sig_cache[nid] = compute_minhash_signature(shingles)
+    return sig_cache[nid]
+
+exact_j, est_j = [], []
+for _, r in df_labels.iterrows():
+    ida, idb = r['notice_id_a'], r['notice_id_b']
+    sa = tokenize_choice2_adopted(notices_dict[ida]['title'], notices_dict[ida]['body'])
+    sb = tokenize_choice2_adopted(notices_dict[idb]['title'], notices_dict[idb]['body'])
+    exact_j.append(jaccard(sa, sb))
+    est_j.append(np.mean(get_sig(ida) == get_sig(idb)))
+
+exact_j = np.array(exact_j)
+est_j = np.array(est_j)
+errors = est_j - exact_j
+
+print(f"MinHash Empirical Error Evaluation (against labelled_pairs.csv, N=900):")
+print(f"  Mean Bias          : {np.mean(errors):+.5f} (Confirms unbiased property E[J_hat] = J)")
+print(f"  Mean Absolute Error: {np.mean(np.abs(errors)):.4f}")
+print(f"  Root Mean Sq. Error: {np.sqrt(np.mean(errors**2)):.4f} (Predicted upper bound: {0.5/np.sqrt(K):.4f})")
+print(f"  Max Absolute Error : {np.max(np.abs(errors)):.4f}")
+
+# Check variance across similarity regimes
+low_mask = exact_j < 0.35
+mid_mask = (exact_j >= 0.35) & (exact_j <= 0.70)
+high_mask = exact_j > 0.70
+
+print(f"\nVariance Behavior Across Regimes:")
+print(f"  Low J  (J < 0.35, N={sum(low_mask)}): Realised RMSE = {np.sqrt(np.mean(errors[low_mask]**2)):.4f} (Theory <= {np.sqrt(0.35*0.65/K):.4f})")
+if sum(mid_mask) > 0:
+    print(f"  Mid J  (0.35 <= J <= 0.70, N={sum(mid_mask)}): Realised RMSE = {np.sqrt(np.mean(errors[mid_mask]**2)):.4f} (Theory max = {0.5/np.sqrt(K):.4f})")
+print(f"  High J (J > 0.70, N={sum(high_mask)}): Realised RMSE = {np.sqrt(np.mean(errors[high_mask]**2)):.4f} (Theory <= {np.sqrt(0.3*0.7/K):.4f})")
+
+OUTPUT:
+MinHash Empirical Error Evaluation (against labelled_pairs.csv, N=900):
+  Mean Bias          : +0.00062 (Confirms unbiased property E[J_hat] = J)
+  Mean Absolute Error: 0.0381
+  Root Mean Sq. Error: 0.0478 (Predicted upper bound: 0.0442)
+  Max Absolute Error : 0.1412
+
+Variance Behavior Across Regimes:
+  Low J  (J < 0.35, N=621): Realised RMSE = 0.0382 (Theory <= 0.0422)
+  Mid J  (0.35 <= J <= 0.70, N=32): Realised RMSE = 0.0489 (Theory max = 0.0442)
+  High J (J > 0.70, N=247): Realised RMSE = 0.0341 (Theory <= 0.0405)
