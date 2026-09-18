@@ -1,0 +1,3 @@
+Write-Host "=== SUBQUESTION (e) - QUERY EXECUTION EVIDENCE ==="
+
+python -c "import duckdb; con=duckdb.connect(); con.execute('INSTALL httpfs'); con.execute('LOAD httpfs'); con.execute(""CREATE OR REPLACE SECRET minio (TYPE S3, KEY_ID 'admin', SECRET 'minioadmin', REGION 'us-east-1', ENDPOINT 'localhost:9000', URL_STYLE 'path', USE_SSL false)""); r=con.execute(""EXPLAIN SELECT store, COUNT(*) AS rows FROM read_parquet('s3://shopsphere/curated/sales/**/*.parquet', hive_partitioning=true) GROUP BY store ORDER BY store"").fetchall(); print(r[0][1])"
